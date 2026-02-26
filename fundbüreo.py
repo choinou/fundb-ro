@@ -14,7 +14,7 @@ st.title("Bildklassifikation mit Keras Modell")
 # ----------------------------
 @st.cache_resource
 def load_keras_model():
-    model = load_model("keras_Model.h5", compile=False)
+    model = load_model("keras_model.h5", compile=False)
     return model
 
 model = load_keras_model()
