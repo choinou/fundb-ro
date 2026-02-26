@@ -1,0 +1,3 @@
+0 Schuhe
+1 Sportshirt 
+2 Wasserflasche
