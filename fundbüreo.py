@@ -24,8 +24,11 @@ if not os.path.exists(DB_FILE):
 
 # Hilfsfunktionen für die Datenbank
 def load_db():
-    with open(DB_FILE, "r") as f:
-        return json.load(f)
+    try:
+        with open(DB_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return []
 
 def save_db(data):
     with open(DB_FILE, "w") as f:
@@ -42,6 +45,7 @@ st.title("Digitales Fundbüro mit Keras Modell")
 # ----------------------------
 @st.cache_resource
 def load_keras_model():
+    # Stelle sicher, dass "keras_model.h5" im Repository liegt
     model = load_model("keras_model.h5", compile=False)
     return model
 
@@ -52,7 +56,7 @@ try:
     with open("labels.txt", "r") as f:
         class_names = f.readlines()
 except FileNotFoundError:
-    st.error("Datei 'labels.txt' nicht gefunden. Bitte sicherstellen, dass sie im gleichen Ordner liegt.")
+    st.error("Datei 'labels.txt' nicht gefunden. Bitte prüfen!")
     st.stop()
 
 # ----------------------------
@@ -74,7 +78,8 @@ with tab1:
     if uploaded_file is not None:
         # Bild anzeigen
         image = Image.open(uploaded_file).convert("RGB")
-        st.image(image, caption="Hochgeladenes Bild", use_container_width=True)
+        # FIX: Hier wurde use_column_width verwendet für Kompatibilität mit v1.32.2
+        st.image(image, caption="Hochgeladenes Bild", use_column_width=True)
 
         # Bild Preprocessing
         size = (224, 224)
@@ -118,7 +123,7 @@ with tab1:
             })
             save_db(db)
             
-            st.success("Erfolgreich gespeichert! Du findest es jetzt in der Übersicht.")
+            st.success("Erfolgreich gespeichert! Schau in der Übersicht nach.")
 
 # ==========================================
 # TAB 2: ÜBERSICHT & ABHOLEN
@@ -131,31 +136,28 @@ with tab2:
     if not db:
         st.info("Bisher wurden keine Fundstücke gemeldet.")
     else:
-        # Fundstücke in einem Raster (3 Spalten) anzeigen, damit es aufgeräumt aussieht
-        cols = st.columns(3)
+        # Fundstücke in Spalten anzeigen
+        cols = st.columns(2)
         
         for idx, item in enumerate(db):
-            col = cols[idx % 3] # Verteilt die Items gleichmäßig auf die 3 Spalten
+            col = cols[idx % 2] 
             with col:
-                try:
-                    # Bild laden und anzeigen
-                    st.image(item["img_path"], use_container_width=True)
-                except FileNotFoundError:
-                    st.warning("Bilddatei fehlt.")
+                if os.path.exists(item["img_path"]):
+                    # FIX: Auch hier use_column_width verwendet
+                    st.image(item["img_path"], use_column_width=True)
                 
-                st.write(f"**Was:** {item['class_name']}")
-                st.write(f"**Wann:** {item['date']}")
+                st.write(f"**Gegenstand:** {item['class_name']}")
+                st.write(f"**Gefunden am:** {item['date']}")
                 
-                # Button: Das ist meins! (Der Key muss unique sein)
-                if st.button("🙋‍♂️ Das ist meins!", key=item["id"]):
-                    # 1. Aus der JSON löschen
-                    db = [x for x in db if x["id"] != item["id"]]
-                    save_db(db)
+                # Button zum Löschen/Abholen
+                if st.button(f"🙋‍♂️ Das ist meins!", key=item["id"]):
+                    # Aus Datenbank entfernen
+                    new_db = [x for x in db if x["id"] != item["id"]]
+                    save_db(new_db)
                     
-                    # 2. Bilddatei löschen
+                    # Datei löschen
                     if os.path.exists(item["img_path"]):
                         os.remove(item["img_path"])
                         
-                    st.success("Klasse! Das Fundstück wurde aus der Übersicht entfernt.")
-                    # Seite sofort neu laden, damit das Item verschwindet
+                    st.success("Gegenstand abgeholt!")
                     st.rerun()
