@@ -2,15 +2,43 @@ import streamlit as st
 import numpy as np
 from tensorflow.keras.models import load_model
 from PIL import Image, ImageOps
+import os
+import json
+import uuid
+from datetime import datetime
+
+# ----------------------------
+# Datei- und Ordner-Setup für Speicherfunktion
+# ----------------------------
+UPLOAD_DIR = "uploads"
+DB_FILE = "fundstuecke.json"
+
+# Ordner für Bilder erstellen, falls nicht vorhanden
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR)
+
+# JSON-Datenbank erstellen, falls nicht vorhanden
+if not os.path.exists(DB_FILE):
+    with open(DB_FILE, "w") as f:
+        json.dump([], f)
+
+# Hilfsfunktionen für die Datenbank
+def load_db():
+    with open(DB_FILE, "r") as f:
+        return json.load(f)
+
+def save_db(data):
+    with open(DB_FILE, "w") as f:
+        json.dump(data, f, indent=4)
 
 # ----------------------------
 # Seiteneinstellungen
 # ----------------------------
-st.set_page_config(page_title="Bildklassifikation", layout="centered")
-st.title("Bildklassifikation mit Keras Modell")
+st.set_page_config(page_title="Digitales Fundbüro", layout="centered")
+st.title("Digitales Fundbüro mit Keras Modell")
 
 # ----------------------------
-# Modell laden (Caching wichtig!)
+# Modell & Labels laden
 # ----------------------------
 @st.cache_resource
 def load_keras_model():
@@ -20,47 +48,114 @@ def load_keras_model():
 model = load_keras_model()
 
 # Labels laden
-with open("labels.txt", "r") as f:
-    class_names = f.readlines()
+try:
+    with open("labels.txt", "r") as f:
+        class_names = f.readlines()
+except FileNotFoundError:
+    st.error("Datei 'labels.txt' nicht gefunden. Bitte sicherstellen, dass sie im gleichen Ordner liegt.")
+    st.stop()
 
 # ----------------------------
-# Bild-Upload
+# UI Layout: Tabs für die Navigation
 # ----------------------------
-uploaded_file = st.file_uploader(
-    "Lade ein Bild hoch...",
-    type=["jpg", "jpeg", "png"]
-)
+tab1, tab2 = st.tabs(["🔍 Neues Fundstück melden", "📦 Übersicht der Fundstücke"])
 
-if uploaded_file is not None:
+# ==========================================
+# TAB 1: FUNDSTÜCK MELDEN
+# ==========================================
+with tab1:
+    st.subheader("Fundstück einscannen und abspeichern")
+    
+    uploaded_file = st.file_uploader(
+        "Lade ein Bild hoch...",
+        type=["jpg", "jpeg", "png"]
+    )
 
-    # Bild anzeigen
-    image = Image.open(uploaded_file).convert("RGB")
-    st.image(image, caption="Hochgeladenes Bild", use_column_width=True)
+    if uploaded_file is not None:
+        # Bild anzeigen
+        image = Image.open(uploaded_file).convert("RGB")
+        st.image(image, caption="Hochgeladenes Bild", use_container_width=True)
 
-    # ----------------------------
-    # Bild Preprocessing
-    # ----------------------------
-    size = (224, 224)
-    image = ImageOps.fit(image, size, Image.Resampling.LANCZOS)
+        # Bild Preprocessing
+        size = (224, 224)
+        image_resized = ImageOps.fit(image, size, Image.Resampling.LANCZOS)
+        image_array = np.asarray(image_resized)
+        normalized_image_array = (image_array.astype(np.float32) / 127.5) - 1
 
-    image_array = np.asarray(image)
+        data = np.ndarray(shape=(1, 224, 224, 3), dtype=np.float32)
+        data[0] = normalized_image_array
 
-    normalized_image_array = (image_array.astype(np.float32) / 127.5) - 1
+        # Vorhersage
+        prediction = model.predict(data)
+        index = np.argmax(prediction)
+        class_name = class_names[index].strip()
+        confidence_score = float(prediction[0][index])
 
-    data = np.ndarray(shape=(1, 224, 224, 3), dtype=np.float32)
-    data[0] = normalized_image_array
+        # Ergebnis anzeigen
+        st.write("---")
+        st.write(f"**Erkannte Klasse:** {class_name}")
+        st.write(f"**Sicherheit:** {confidence_score:.2%}")
 
-    # ----------------------------
-    # Vorhersage
-    # ----------------------------
-    prediction = model.predict(data)
-    index = np.argmax(prediction)
-    class_name = class_names[index].strip()
-    confidence_score = float(prediction[0][index])
+        # Speichern-Button
+        if st.button("💾 Dieses Fundstück speichern"):
+            # Eindeutige ID für das Bild erstellen
+            item_id = str(uuid.uuid4())
+            file_ext = uploaded_file.name.split('.')[-1]
+            img_path = os.path.join(UPLOAD_DIR, f"{item_id}.{file_ext}")
 
-    # ----------------------------
-    # Ergebnis anzeigen
-    # ----------------------------
-    st.subheader("Ergebnis")
-    st.write(f"**Klasse:** {class_name}")
-    st.write(f"**Konfidenz:** {confidence_score:.2%}")
+            # Bild physisch speichern
+            with open(img_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+
+            # Infos in die JSON-Datenbank schreiben
+            db = load_db()
+            db.append({
+                "id": item_id,
+                "class_name": class_name,
+                "confidence": confidence_score,
+                "date": datetime.now().strftime("%d.%m.%Y %H:%M"),
+                "img_path": img_path
+            })
+            save_db(db)
+            
+            st.success("Erfolgreich gespeichert! Du findest es jetzt in der Übersicht.")
+
+# ==========================================
+# TAB 2: ÜBERSICHT & ABHOLEN
+# ==========================================
+with tab2:
+    st.subheader("Alle gespeicherten Fundstücke")
+    
+    db = load_db()
+
+    if not db:
+        st.info("Bisher wurden keine Fundstücke gemeldet.")
+    else:
+        # Fundstücke in einem Raster (3 Spalten) anzeigen, damit es aufgeräumt aussieht
+        cols = st.columns(3)
+        
+        for idx, item in enumerate(db):
+            col = cols[idx % 3] # Verteilt die Items gleichmäßig auf die 3 Spalten
+            with col:
+                try:
+                    # Bild laden und anzeigen
+                    st.image(item["img_path"], use_container_width=True)
+                except FileNotFoundError:
+                    st.warning("Bilddatei fehlt.")
+                
+                st.write(f"**Was:** {item['class_name']}")
+                st.write(f"**Wann:** {item['date']}")
+                
+                # Button: Das ist meins! (Der Key muss unique sein)
+                if st.button("🙋‍♂️ Das ist meins!", key=item["id"]):
+                    # 1. Aus der JSON löschen
+                    db = [x for x in db if x["id"] != item["id"]]
+                    save_db(db)
+                    
+                    # 2. Bilddatei löschen
+                    if os.path.exists(item["img_path"]):
+                        os.remove(item["img_path"])
+                        
+                    st.success("Klasse! Das Fundstück wurde aus der Übersicht entfernt.")
+                    # Seite sofort neu laden, damit das Item verschwindet
+                    st.rerun()
